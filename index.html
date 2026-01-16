@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Immune Quest: Defenders of the Body</title>
+<style>
+body{margin:0;background:#000;color:#fff;font-family:monospace;overflow:hidden}
+canvas{display:block;margin:auto;background:#111;image-rendering:pixelated}
+#ui{position:fixed;inset:0;pointer-events:none}
+#hearts{position:absolute;top:6px;left:6px}
+#quest{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);width:94%;background:rgba(0,0,0,.85);border:2px solid #444;padding:6px}
+#info{position:absolute;top:6px;right:6px;width:260px;background:rgba(0,0,0,.85);border:2px solid #444;padding:6px;white-space:pre-line}
+#map{position:absolute;right:6px;bottom:120px;border:2px solid #444;background:#111}
+#upgrades{position:absolute;left:6px;bottom:6px;background:rgba(0,0,0,.85);border:2px solid #444;padding:6px}
+button{font-family:monospace;margin-top:4px}
+</style>
+</head>
+<body>
+
+<canvas id="game" width="960" height="540"></canvas>
+
+<div id="ui">
+  <div id="hearts"></div>
+  <div id="info"></div>
+  <div id="quest"></div>
+  <canvas id="map" width="140" height="200"></canvas>
+  <div id="upgrades">
+    Upgrades (5 kills)<br>
+    <button onclick="upgrade('dmg')">Damage +</button><br>
+    <button onclick="upgrade('rate')">Fire Rate +</button><br>
+    <button onclick="upgrade('spd')">Speed +</button>
+  </div>
+</div>
+
+<script>
+const c=document.getElementById("game"),x=c.getContext("2d");
+const m=document.getElementById("map").getContext("2d");
+const keys={},mouse={x:0,y:0,down:false};
+
+document.addEventListener("keydown",e=>keys[e.key.toLowerCase()]=true);
+document.addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
+c.addEventListener("mousemove",e=>{
+ let r=c.getBoundingClientRect();
+ mouse.x=e.clientX-r.left;
+ mouse.y=e.clientY-r.top;
+});
+c.addEventListener("mousedown",()=>mouse.down=true);
+c.addEventListener("mouseup",()=>mouse.down=false);
+
+/* PLAYER */
+const p={
+ x:480,y:270,
+ speed:2.5,
+ hearts:5,
+ fireDelay:15,
+ cd:0,
+ dmg:10,
+ kills:0
+};
+
+let bullets=[],enemies=[],zone=0;
+
+/* BODY ZONES */
+const zones=[
+{name:"Nose",npc:"Sinuses",quest:"Stop the common cold!",disease:"Common Cold\nAffects nasal passages\nPrevention: Wash hands",count:4,color:"#223"},
+{name:"Throat",npc:"Throat",quest:"Bacteria detected!",disease:"Strep Throat\nPainful swelling\nPrevention: Hygiene",count:5,color:"#334"},
+{name:"Lungs",npc:"Lungs",quest:"Breathing compromised!",disease:"Influenza\nRespiratory infection\nPrevention: Vaccines",count:6,color:"#245"},
+{name:"Heart",npc:"Heart",quest:"Heartbeat unstable!",disease:"Myocarditis\nWeakens heart\nPrevention: Infection control",count:6,color:"#400"},
+{name:"Blood",npc:"Bloodstream",quest:"Infection spreading!",disease:"Sepsis\nRapid bacteria spread\nPrevention: Clean wounds",count:8,color:"#500"},
+{name:"Brain",npc:"Brain",quest:"Neural threat detected!",disease:"Encephalitis\nBrain inflammation",count:7,color:"#222"},
+{name:"Mouth",npc:"Mouth",quest:"Oral infection!",disease:"Bacteria\nTooth decay\nPrevention: Brush teeth",count:4,color:"#653"},
+{name:"Stomach",npc:"Stomach",quest:"Food poisoning!",disease:"Norovirus\nVomiting\nPrevention: Food safety",count:6,color:"#764"},
+{name:"Intestines",npc:"Intestines",quest:"Parasites detected!",disease:"Parasites\nNutrient loss\nPrevention: Clean water",count:7,color:"#875"},
+{name:"Liver",npc:"Liver",quest:"Detox failure!",disease:"Hepatitis\nLiver damage\nPrevention: Vaccines",count:7,color:"#662"},
+{name:"Pancreas",npc:"Pancreas",quest:"Enzyme overload!",disease:"Pancreatitis\nInflammation",count:6,color:"#775"},
+{name:"Lymph",npc:"Lymph Nodes",quest:"Immune system weakened!",disease:"Lymph Infection",count:6,color:"#357"},
+{name:"Bone Marrow",npc:"Bone Marrow",quest:"Blood cell failure!",disease:"Cell disorder",count:6,color:"#777"},
+{name:"Spleen",npc:"Spleen",quest:"Blood filter failing!",disease:"Splenic infection",count:6,color:"#446"},
+{name:"Skin",npc:"Skin",quest:"Surface infection!",disease:"Staph\nOpen sores\nPrevention: Clean wounds",count:5,color:"#aa7"},
+{name:"Eyes",npc:"Eyes",quest:"Vision threatened!",disease:"Conjunctivitis",count:4,color:"#88f"},
+{name:"Ears",npc:"Ears",quest:"Balance disrupted!",disease:"Ear infection",count:4,color:"#559"},
+{name:"Kidneys",npc:"Kidneys",quest:"Filtration failing!",disease:"Kidney infection\nStay hydrated",count:6,color:"#556"},
+{name:"Bladder",npc:"Bladder",quest:"UTI detected!",disease:"Urinary infection",count:5,color:"#558"},
+{name:"Muscles",npc:"Muscles",quest:"Movement impaired!",disease:"Muscle infection",count:6,color:"#933"},
+{name:"Joints",npc:"Joints",quest:"Mobility loss!",disease:"Joint inflammation",count:6,color:"#777"},
+{name:"Nervous System",npc:"Nerves",quest:"Signal failure!",disease:"Neurovirus",count:8,color:"#111"},
+{name:"Immune Core",npc:"Immune Core",quest:"FINAL THREAT!",disease:"APEX VIRUS\nAttacks entire body",count:1,color:"#000",boss:true}
+];
+
+function spawn(){
+ enemies=[];
+ let z=zones[zone];
+ for(let i=0;i<z.count;i++){
+  enemies.push({
+   x:Math.random()*960,
+   y:Math.random()*540,
+   hp:z.boss?300:40,
+   max:z.boss?300:40,
+   r:z.boss?30:14,
+   sp:z.boss?1.1:1.6
+  });
+ }
+}
+spawn();
+
+/* UPGRADES */
+function upgrade(t){
+ if(p.kills<5)return;
+ p.kills-=5;
+ if(t==="dmg")p.dmg+=5;
+ if(t==="rate")p.fireDelay=Math.max(5,p.fireDelay-3);
+ if(t==="spd")p.speed+=0.4;
+}
+
+/* UPDATE */
+function update(){
+ let dx=0,dy=0;
+ if(keys.w||keys.arrowup)dy--;
+ if(keys.s||keys.arrowdown)dy++;
+ if(keys.a||keys.arrowleft)dx--;
+ if(keys.d||keys.arrowright)dx++;
+ let l=Math.hypot(dx,dy)||1;
+ p.x+=dx/l*p.speed;
+ p.y+=dy/l*p.speed;
+
+ if(mouse.down&&p.cd<=0){
+  let a=Math.atan2(mouse.y-p.y,mouse.x-p.x);
+  bullets.push({x:p.x,y:p.y,vx:Math.cos(a)*6,vy:Math.sin(a)*6});
+  p.cd=p.fireDelay;
+ }
+ p.cd--;
+
+ bullets.forEach(b=>{b.x+=b.vx;b.y+=b.vy});
+ bullets=bullets.filter(b=>b.x>0&&b.y>0&&b.x<960&&b.y<540);
+
+ enemies.forEach(e=>{
+  let a=Math.atan2(p.y-e.y,p.x-e.x);
+  e.x+=Math.cos(a)*e.sp;
+  e.y+=Math.sin(a)*e.sp;
+  if(Math.hypot(p.x-e.x,p.y-e.y)<e.r+8)p.hearts--;
+ });
+
+ bullets.forEach(b=>{
+  enemies.forEach(e=>{
+   if(Math.hypot(b.x-e.x,b.y-e.y)<e.r){
+    e.hp-=p.dmg;
+    b.dead=true;
+   }
+  });
+ });
+
+ bullets=bullets.filter(b=>!b.dead);
+ enemies=enemies.filter(e=>{
+  if(e.hp<=0){p.kills++;return false}
+  return true;
+ });
+
+ if(enemies.length===0){
+  zone++;
+  if(zone<zones.length)spawn();
+ }
+}
+
+/* DRAW */
+function draw(){
+ let z=zones[Math.min(zone,zones.length-1)];
+ x.fillStyle=z.color;
+ x.fillRect(0,0,960,540);
+
+ x.fillStyle="#f55";
+ x.fillRect(p.x-6,p.y-6,12,12);
+
+ x.fillStyle="#faa";
+ bullets.forEach(b=>x.fillRect(b.x-2,b.y-2,4,4));
+
+ enemies.forEach(e=>{
+  x.fillStyle="#5f5";
+  x.fillRect(e.x-e.r/2,e.y-e.r/2,e.r,e.r);
+  x.fillStyle="#000";
+  x.fillRect(e.x-20,e.y-e.r-10,40,4);
+  x.fillStyle="#f44";
+  x.fillRect(e.x-20,e.y-e.r-10,40*(e.hp/e.max),4);
+ });
+
+ document.getElementById("hearts").textContent="Health: "+"♥ ".repeat(p.hearts);
+ document.getElementById("quest").textContent=z.npc+": "+z.quest;
+ document.getElementById("info").textContent=z.name+"\n\n"+z.disease+"\n\nKills: "+p.kills;
+
+ m.fillStyle="#000";m.fillRect(0,0,140,200);
+ zones.forEach((_,i)=>{
+  m.fillStyle=i===zone?"#f55":"#444";
+  m.fillRect(60,10+i*7,20,6);
+ });
+}
+
+/* LOOP */
+function loop(){
+ if(p.hearts<=0){
+  x.fillStyle="#fff";
+  x.font="30px monospace";
+  x.fillText("IMMUNE SYSTEM FAILED",300,270);
+  return;
+ }
+ if(zone>=zones.length){
+  x.fillStyle="#fff";
+  x.font="30px monospace";
+  x.fillText("BODY SAVED",380,270);
+  return;
+ }
+ update();draw();
+ requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
